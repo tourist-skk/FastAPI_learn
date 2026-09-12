@@ -1,0 +1,7 @@
+### 访问首页
+GET http://127.0.0.1:8000/
+Accept: application/json
+
+### 使用名字打招呼
+GET http://127.0.0.1:8000/hello/FastAPI
+Accept: application/json

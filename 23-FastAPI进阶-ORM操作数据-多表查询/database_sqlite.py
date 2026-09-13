@@ -1,6 +1,5 @@
 from contextlib import asynccontextmanager
 
-from pydantic import BaseModel
 from sqlalchemy import func
 import datetime
 from pathlib import Path
@@ -74,13 +73,6 @@ class Book(Base):
     author: Mapped[str] = mapped_column(String(255),index=True,comment="作者")
     price: Mapped[float] = mapped_column(Float,index=True,comment="价格")
     publisher: Mapped[str] = mapped_column(String(255),index=True,comment="出版社")
-
-class BookBase(BaseModel):
-    """书籍类。"""
-    bookname: str
-    author: str
-    price: float
-    publisher: str
 
 class Author(Base):
     """作者表，沿用 Base 中的创建时间和更新时间。"""
@@ -197,12 +189,124 @@ async def get_count(db:AsyncSession = Depends(get_database)):
     count = result.scalar()
     return count
 
-# 需求: 新增书籍接口。 难点；如何获取ORM对象
-# 这里的输入参数，应该是用户可以接触到的 Book属性(比如 id、书名、作者、出版社、价格)
-# 用户输入 -> 参数 -> 请求体参数 -> 定义一个类
-@app.post("/book/add_book")
-async def add_book(book:BookBase,db: AsyncSession = Depends(get_database)):
-    new_book = Book(**book.__dict__)
-    db.add(new_book)#新增到事务
-    await db.commit()
-    return new_book
+@app.get("/book/max_price")
+async def get_max_price(db:AsyncSession = Depends(get_database)):
+    result = await db.execute(select(func.max(Book.price)))
+    max_price = result.scalar()
+    return max_price
+
+# 内连接
+@app.get("/book/books_with_authors")
+async def query_books_with_authors(db:AsyncSession = Depends(get_database)):
+    # join(Author, 条件)：Author 是要连接的目标表，第二个参数是 ON 条件，用来判断两条记录是否匹配。默认是内连接。
+    # order_by(Book.id)：按书籍 ID 排序，固定结果顺序。
+    stmt = (
+        select(
+            Book.id.label("book_id"),
+            Book.bookname,
+            Author.name.label("author_name"),
+            Author.nationality,
+        )
+        .select_from(Book).join(Author, Book.author == Author.name).order_by(Book.id)
+    )
+    result = await db.execute(stmt)
+    books_mappings = result.mappings().all()
+    return [dict(books_mapping) for books_mapping in books_mappings]
+
+# 返回 (Book实例, Author实例)
+# rows = await query_book_author_objects(db)
+# for book, author in rows:
+#     print(book.bookname, author.name, author.nationality)
+@app.get("/book/books_with_authors_objects")
+async def query_books_with_authors_objects(db:AsyncSession = Depends(get_database)):
+    stmt = (
+        select(
+            Book,
+            Author,
+        )
+        .select_from(Book).join(Author, Book.author == Author.name).order_by(Book.id)
+    )
+    result = await db.execute(stmt)
+    books_mappings = result.mappings().all()
+    # 如果改成 result.scalars().all()，默认只留下每行第一个元素，也就是 Book 实例；Author 不会一起出现在返回值中。这个辅助函数的 Row 列表用于 Python 内部处理，直接作为接口响应时，应先组织成需要的字典结构。
+    return [dict(books_mapping) for books_mapping in books_mappings]
+
+
+# 需求: 查询所有作者为中国人的书籍
+@app.get("/book/books_by_nationality")
+async def query_books_by_nationality(db:AsyncSession = Depends(get_database)):
+    stmt = (
+        select(
+            Book.id.label("book_id"),
+            Book.bookname,
+            Author.name.label("author_name"),
+            Author.nationality,
+        )
+        .select_from(Book).join(Author, Book.author == Author.name)
+        .where(Author.nationality == "中国")
+        .order_by(Book.id)
+    )
+    result = await db.execute(stmt)
+    books_mappings = result.mappings().all()
+    return [dict(books_mapping) for books_mapping in books_mappings]
+
+
+# 左连接，保留找不到作者的书籍
+@app.get("/book/books_left_join")
+async def query_books_left_join(db: AsyncSession = Depends(get_database)):
+    # 这里 Book 是左侧起点，Author 是右侧目标，outerjoin(...) 默认生成左外连接。也可以把这一行改成 .join(Author, Book.author == Author.name, isouter=True)。
+    stmt = (
+        select(
+            Book.id.label("book_id"),
+            Book.bookname,
+            Author.name.label("author_name"),
+            Author.nationality,
+        )
+        .select_from(Book)
+        .outerjoin(Author, Book.author == Author.name)
+        .order_by(Book.id)
+    )
+    result = await db.execute(stmt)
+    books_mappings = result.mappings().all()
+    return [dict(books_mapping) for books_mapping in books_mappings]
+
+# 左连接，所有书籍保留，但只附带中国作者的资料
+@app.get("/book/books_with_chinese_author_info")
+async def query_books_with_chinese_author_info(db: AsyncSession = Depends(get_database)):
+    stmt = (
+        select(
+            Book.id.label("book_id"),
+            Book.bookname,
+            Author.name.label("author_name"),
+            Author.nationality,
+        )
+        .select_from(Book)
+        .outerjoin(Author, and_(Book.author == Author.name, Author.nationality == "中国"))
+        #对于「作者不是中国」的书：nationality 有值但不是 '中国'，条件为假，被过滤掉。 对于「根本匹配不到作者」的书：nationality 是 NULL，而 NULL = '中国' 的结果既不是真也不是假，是 NULL（未知），在 WHERE 里等价于假，同样被过滤掉。
+        #.where(Author.nationality == "中国")
+        .order_by(Book.id)
+    )
+    result = await db.execute(stmt)
+    books_mappings = result.mappings().all()
+    return [dict(books_mapping) for books_mapping in books_mappings]
+
+# 希望每位作者都有一行统计，即使没有书也显示数量 0。因此以 Author 为左侧起点，左连接 Book。
+@app.get("/book/author_book_counts")
+async def query_author_book_counts(db: AsyncSession = Depends(get_database)):
+    stmt = (
+        select(
+            Author.name.label("author_name"),
+            #为什么用 count(Book.id)，而不是 count()？
+            #这么做是为了避免计算 NULL 值，只计算有值的行。
+            func.count(Book.id).label("book_count"),
+        )
+        .select_from(Author)
+        .join(Book, Book.author == Author.name, isouter=True)
+        # SELECT 里出现的非聚合列必须都出现在 GROUP BY 里（这是 SQL 的规则，否则会报错或结果不确定）。
+        # 你的 SELECT 里有 Author.name，它必须分组；而 Author.author_id 是主键，把它也加进 GROUP BY 是为了排序和确定性——因为order_by(Author.author_id) 后面要按 author_id 排序。
+        .group_by(Author.author_id, Author.name)
+        .order_by(Author.author_id)
+    )
+    result = await db.execute(stmt)
+    return [dict(row) for row in result.mappings().all()]
+   

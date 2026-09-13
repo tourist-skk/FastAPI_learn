@@ -253,6 +253,23 @@ books = result.scalars().all()  # 不加 await
 
 `AsyncResult` 是 `await db.stream(stmt)` 使用的异步流式读取包装，见第六节。它不是 `execute()` 因为查到很多行而自动切换出的类型。[AsyncSession.execute()](https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html#sqlalchemy.ext.asyncio.AsyncSession.execute)
 
+### 5. 为什么不能写 await db.execute(stmt).mappings().all()
+
+`await` 的优先级低于属性访问和方法调用，因此这句被解析为 `await (db.execute(stmt).mappings().all())`。程序先在 `db.execute(stmt)` 返回的协程对象上查找 `mappings`，还没有拿到 `Result`，于是抛出 `AttributeError`。
+
+需要先等待查询结果，再调用结果方法：
+
+```python
+# 拆行写法
+result = await db.execute(stmt)
+rows = result.mappings().all()
+
+# 或者用括号写成一行
+# rows = (await db.execute(stmt)).mappings().all()
+```
+
+`scalars()`、`scalar()` 等结果方法也遵守同样规则。原理、错误发生顺序及独立运行示例见 [同步与异步：await 的优先级](03-同步与异步.md)。
+
 ## 四、共同方法：同名方法遵守相近规则，但元素形状不同
 
 本节比较 `Result`、`ScalarResult`、`MappingResult`。对它们使用同名读取方法时，先确定每个“元素”是什么：

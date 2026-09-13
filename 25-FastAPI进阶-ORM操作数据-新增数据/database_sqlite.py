@@ -68,6 +68,10 @@ class Book(Base):
     # 你只写一次 String(255)，SQLAlchemy 帮你适配不同数据库的语法差异。这就是它和普通 Python 类型最大的区别——它知道怎么"落地"到具体数据库。
     # 这些类型对象还支持索引、默认值、约束等。
     # 例如，index=True 表示创建索引，default=0 表示默认值为 0。
+    # 单列、整数、非外键主键，默认的 autoincrement="auto" 就会启用合适的主键生成行为。
+    # 如果显示启用AUTOINCREMENT,则ID不会复用历史上已经提交的ID，即如下
+    # 放在 Book 类内部；其余字段沿用原定义
+    # __table_args__ = {"sqlite_autoincrement": True}
     id: Mapped[int] = mapped_column(primary_key=True, index=True,comment="书籍ID")
     # ython 的 str 没有"长度"概念，但数据库的字符串列通常需要长度、是否可空、索引等约束。这些只能通过 SQLAlchemy 类型对象（String(255)）和 mapped_column 的参数来表达，Python 类型本身表达不了。
     bookname: Mapped[str] = mapped_column(String(255),index=True,comment="书名")

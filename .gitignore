@@ -20,5 +20,10 @@ ENV/
 *.sqlite
 *.sqlite3
 
+# ===== Node / 前端 =====
+node_modules/
+dist/
+.vite/
+
 # ===== macOS =====
 .DS_Store

@@ -2,7 +2,13 @@ from datetime import datetime
 from sqlalchemy import DateTime
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-class Base(DeclarativeBase):
+class ModelBase(DeclarativeBase):
+    """所有模型共享的声明式基类，不自动添加字段。"""
+
+
+class Base(ModelBase):
+    __abstract__ = True
+
     # ORM模型类需要与数据库字段保持一致
     # mapped_column 参数说明：
     # DateTime：这一列的数据库类型是日期时间（对应 DB 里的 DATETIME/TIMESTAMP）

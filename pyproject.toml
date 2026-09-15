@@ -6,5 +6,6 @@ dependencies = [
     "aiomysql>=0.3.2",
     "aiosqlite>=0.22.1",
     "fastapi[standard]>=0.141.1",
+    "passlib[bcrypt]>=1.7.4",
     "sqlalchemy[asyncio]>=2.0.52",
 ]

@@ -6,10 +6,7 @@ from sqlalchemy.orm import mapped_column, Mapped
 from sqlalchemy import Index,Integer,String,DateTime,Enum
 # 这里创建的是请求体类，而不是表对应的模型类
 from typing import Optional
-class UserRequest(BaseModel):
 
-    username: str
-    password: str
 
 # 用户表
 # cid  name        type          notnull  dflt_value         pk

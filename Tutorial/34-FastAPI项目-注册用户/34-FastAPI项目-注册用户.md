@@ -429,13 +429,160 @@ async def get_db():
 
 普通 Python 调用不会自动注入 `Depends`，所以 CRUD 都显式接收真实的 `AsyncSession`。使用同一个会话还不够：如果中途执行 `commit()`，后面的操作就已经不再属于之前那个未提交事务。
 
-### 8.2 为什么使用 scope="function"？
+### 8.2 依赖注入的 scope 到底控制什么？
 
-对于含有 `yield` 的依赖，FastAPI 默认在响应发送之后执行退出代码。本项目支持 `Depends(get_db, scope="function")`，使退出代码在路由函数结束后、响应发送之前执行。
+**`scope` 控制依赖的执行生命周期，重点是：路由拿到依赖提供的资源后，FastAPI 什么时候让依赖执行退出代码。**代码中参数名使用小写 `scope`，本章基于项目当前的 FastAPI `0.141.1` 说明。
 
-因为 `get_db` 的退出代码包含 `commit()`，这样才能先确认提交成功，再发送成功响应。测试中模拟提交失败时，接口返回 `500`，数据库中也没有残留用户和令牌。参见 [FastAPI 依赖退出时机](https://fastapi.tiangolo.com/tutorial/dependencies/dependencies-with-yield/#early-exit-and-scope)。
+例如注册接口中：
 
-当前响应在会话退出前已经取出了所需属性，不需要在会话关闭后再加载 ORM 数据。
+```python
+db: AsyncSession = Depends(get_db, scope="function")
+```
+
+这里 `get_db` 决定“怎样创建会话、怎样提交或回滚、怎样清理资源”；`scope` 决定“何时结束这次依赖调用，执行这些收尾步骤”。它主要用于包含 `yield` 的依赖。参见 [FastAPI Depends 参数说明](https://fastapi.tiangolo.com/reference/dependencies/)。
+
+#### 8.2.1 先把含 yield 的依赖看成三个阶段
+
+结合上面的 `get_db`，一次正常请求经历：
+
+```text
+阶段一：进入依赖
+    创建 session，执行 yield 之前的代码
+
+阶段二：暂停依赖，把资源交给路由
+    yield session → 路由的 db 参数拿到该 session
+    路由使用 db 查询用户名、写入用户、写入令牌
+
+阶段三：退出依赖
+    恢复执行 yield 后的代码
+    正常路径执行 commit，finally 中清理会话
+```
+
+`yield` 把会话交出去后，依赖暂时停在那里，并不是已经执行完毕。FastAPI 会在适当时机恢复或退出它；这个时机就是 `scope` 的核心作用。
+
+如果路由抛出异常，异常会传回依赖的 `yield` 位置，进入 `except` 执行 `rollback()`，然后进入 `finally` 清理。普通 `return` 依赖没有这样的跨路由退出阶段，不能靠设置 `scope` 凭空获得资源清理能力。
+
+#### 8.2.2 function 与 request 的区别
+
+两种模式都在路由执行前解析依赖。**正常返回时**，结束时机不同：
+
+| 写法 | 依赖退出时机 | 覆盖的阶段 |
+| --- | --- | --- |
+| `Depends(get_db, scope="function")` | 路由函数结束后、HTTP 响应发送前 | 路由函数的执行过程 |
+| `Depends(get_db, scope="request")` | HTTP 响应发送完成后 | 路由执行和响应发送过程 |
+| `Depends(get_db)` | 对含 `yield` 的依赖，默认采用 `request` | 与上面的 `request` 相同 |
+
+`function` 指处理请求的**路由函数**，本章就是 `register()`，不是指 `get_db()` 自己，也不是某个 CRUD 函数。因此 `create_user()` 返回时不会提前关闭会话，后面的 `create_user_token()` 仍可以继续使用它。
+
+“路由函数返回了字典”和“HTTP 响应已经发给客户端”是不同阶段。路由的 `return` 先把结果交还给 FastAPI，之后框架还要完成后续处理并发送响应。两种 `scope` 正是把依赖退出安排在发送响应的前面或后面。参见 [FastAPI 依赖退出时机](https://fastapi.tiangolo.com/tutorial/dependencies/dependencies-with-yield/#early-exit-and-scope)。
+
+#### 8.2.3 放到注册流程里，顺序怎样变化？
+
+使用本项目当前的 `function`：
+
+```text
+创建会话 → yield 会话
+    → register() 创建用户、创建令牌
+    → register() 返回响应字典
+    → get_db 恢复执行：commit → 清理会话
+    → FastAPI 发送 HTTP 200 和响应体
+```
+
+如果只把参数改成 `request`，其他代码保持不变：
+
+```text
+创建会话 → yield 会话
+    → register() 创建用户、创建令牌
+    → register() 返回响应字典
+    → FastAPI 发送 HTTP 200 和响应体
+    → get_db 恢复执行：commit → 清理会话
+```
+
+区别在于：本项目的 `commit()` 写在 `yield` 后面。因此，`function` 能先确认事务提交成功，再向前端发送注册成功；`request` 则可能先宣布注册成功，随后才尝试提交。
+
+当前响应已经在路由中整理成普通字典，发送它时不再需要数据库会话，所以适合采用 `function`。
+
+#### 8.2.4 提交失败时，为什么差别很大？
+
+下面的结果通过临时数据库调用实际注册函数和 `get_db` 验证，记录了提交、回滚与 HTTP 发送事件：
+
+| 模式与场景 | 实际事件顺序 | 用户、令牌新增记录数 |
+| --- | --- | --- |
+| `function`，正常注册 | 提交成功 → 发送 `200` → 发送完响应体 | 各 `1` 条 |
+| `request`，正常注册 | 发送 `200` → 发送完响应体 → 提交成功 | 各 `1` 条 |
+| `function`，模拟提交失败 | 提交失败 → 回滚 → 发送 `500` | 都是 `0` 条 |
+| `request`，模拟提交失败 | 发送 `200` → 发送完响应体 → 提交失败 → 回滚 | 都是 `0` 条 |
+
+最后一行说明：数据库确实可以回滚，但服务器已经发送的成功响应无法收回，不能再给同一个请求重新发送一个 `500`。前端于是可能显示“注册成功”，数据库却没有这位新用户。
+
+不过，不能把 `request` 理解为“任何错误都要等到响应发送之后才处理”。例如用户名检查时直接抛出 `HTTPException(400)`，路由还没有成功返回，两种模式下都可以先回滚，再发送错误响应。这个场景也已验证：
+
+```text
+function：路由发现重复用户名 → rollback → HTTP 400
+request： 路由发现重复用户名 → rollback → HTTP 400
+```
+
+因此要区分**路由执行期间发生的错误**和**正常响应发出后，依赖收尾时发生的错误**。
+
+#### 8.2.5 scope 会自动开启事务或提交数据库吗？
+
+不会。它只控制执行时机，事务操作仍来自我们自己写的代码：
+
+```python
+# get_db 中，由我们显式定义的事务行为。
+yield session
+await session.commit()
+```
+
+如果依赖里只有 `yield` 和 `close()`，加上 `scope="function"` 也不会自动多出一次 `commit()`。
+
+本项目中三个设计各自承担不同职责：
+
+| 设计 | 解决的问题 |
+| --- | --- |
+| 用户和令牌使用同一个 `db`，中途不提交 | 让两次写入处于同一个未提交事务中 |
+| `get_db` 中统一 `commit()` / `rollback()` | 全部成功一起保存，失败一起撤销 |
+| `scope="function"` | 在发送成功响应之前完成事务收尾 |
+
+所以，仅修改 `scope` 不能修复 CRUD 中的提前提交。之前两个 `commit()` 改为 `flush()`，与这里设置 `scope` 是相互配合的修改。
+
+#### 8.2.6 scope 与依赖缓存、全局单例有什么关系？
+
+它们解决的是不同问题：
+
+| 参数或机制 | 关注点 |
+| --- | --- |
+| `scope` | 依赖什么时候结束、什么时候执行退出代码 |
+| `use_cache` | 同一请求中重复声明依赖时，是否复用已解析的结果 |
+| 应用生命周期或全局对象 | 资源是否跨多个请求长期存在 |
+
+`scope="request"` 不表示整个应用共享一个数据库会话；`scope="function"` 也不表示每调用一个 CRUD 就创建一个会话。当前 `get_db` 每次创建本请求使用的会话，路由再把同一个 `db` 显式传给各 CRUD。
+
+`Depends` 的 `use_cache` 默认是 `True`，同一请求中的重复依赖通常可以复用结果；需要禁用缓存时使用 `use_cache=False`。不要用切换 `scope` 来表达“是否复用对象”的需求。参见 [FastAPI Depends：use_cache](https://fastapi.tiangolo.com/reference/dependencies/)。
+
+#### 8.2.7 实际项目中如何选择？
+
+| 场景 | 选择依据 |
+| --- | --- |
+| 本章注册接口，依赖退出时提交事务 | 使用 `function`，提交成功后再发送成功响应 |
+| 普通查询，路由已把需要的数据读取并整理成字典 | 可以使用 `function`，发送响应前释放资源 |
+| `StreamingResponse` 的迭代器在发送过程中还要读取文件或数据库 | 相关资源通常需要 `request`，避免响应仍在生成时就被关闭 |
+| 流式响应的数据已提前读入内存，发送过程不再使用该资源 | 可以更早释放资源，无须仅因为响应类型是流式就延长依赖 |
+
+`request` 有自己的用途，并不是应当全部替换成 `function`。选择时要看：**路由返回以后，生成或发送响应的过程是否还需要这个资源，以及依赖退出失败是否必须影响响应结果。**
+
+#### 8.2.8 子依赖的 scope 还有什么限制？
+
+如果含 `yield` 的依赖 A 又依赖含 `yield` 的依赖 B，A 的退出代码可能还要使用 B，因此 B 不能比 A 更早释放：
+
+| A 的 scope | B 的 scope | 是否允许 |
+| --- | --- | --- |
+| `function` | `function` | 允许，先退出 A，再退出 B |
+| `function` | `request` | 允许，B 保留得更久 |
+| `request` | `request` | 允许，按依赖顺序收尾 |
+| `request` | `function` | 不允许，A 收尾时 B 已经结束 |
+
+这是依赖资源生命周期的约束，与数据库表之间的外键关系无关。参见 [FastAPI 子依赖 scope 规则](https://fastapi.tiangolo.com/tutorial/dependencies/dependencies-with-yield/#scope-for-sub-dependencies)。
 
 ### 8.3 完整时序
 

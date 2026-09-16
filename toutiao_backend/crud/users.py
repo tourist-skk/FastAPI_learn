@@ -1,4 +1,5 @@
-from models.users import User, UserRequest, UserToken
+from models.users import User, UserToken
+from schemes.users import UserRequest
 from datetime import datetime
 from datetime import timedelta
 from sqlalchemy.ext.asyncio import AsyncSession

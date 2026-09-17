@@ -51,8 +51,8 @@ async def read_news_detail(
     ):
     # 实际这里需要返回新闻详情，因此需要查询数据库
     new_one = await news.get_news_detail(news_id, db)
-    if not new_one:
-        raise HTTPException(status_code=404, detail="新闻不存在")
+    # if not new_one:
+    #     raise HTTPException(status_code=404, detail="新闻不存在")
     # 需要更新该新闻的点击量
     views_count = await news.update_news_views(new_one.id, db)
     if views_count == 0:

@@ -51,3 +51,6 @@ async def create_user_token(db: AsyncSession, user_id: int) -> UserToken:
     # 读取数据库中的默认值，但不提前提交事务。
     await db.refresh(user_token)
     return user_token
+
+async def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return await verify_password(plain_password, hashed_password)

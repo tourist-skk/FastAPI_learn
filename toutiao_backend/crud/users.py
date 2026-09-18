@@ -5,7 +5,8 @@ from datetime import timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import Optional
-from utils.security import hash_password
+from fastapi import HTTPException,status
+from utils.security import hash_password,verify_password
 import uuid
 
 
@@ -52,5 +53,29 @@ async def create_user_token(db: AsyncSession, user_id: int) -> UserToken:
     await db.refresh(user_token)
     return user_token
 
-async def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return await verify_password(plain_password, hashed_password)
+async def authenticate_user(db: AsyncSession, user_request: UserRequest) -> User:
+    existing_user = await get_user_by_username(db, user_request.username)
+    if not existing_user:
+        return None
+    is_valid = verify_password(user_request.password, existing_user.password)
+    if not is_valid:
+        return None
+    return existing_user
+
+async def get_user_by_id(db: AsyncSession, user_id: int) -> Optional[User]:
+    stmt = select(User).where(User.id == user_id)
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
+
+# 根据token查询用户 -> 验证token是否有效 -> 返回用户信息
+async def get_user_by_token(db: AsyncSession, token: str) -> Optional[User]:
+    stmt = select(UserToken).where(UserToken.token == token)
+    result = await db.execute(stmt)
+    db_token = result.scalar_one_or_none()
+    # 1. 验证token是否存在
+    # 2. 验证token是否过期
+    if not db_token or db_token.expires_at < datetime.now():
+        return None
+    stmt = select(User).where(User.id == db_token.user_id)
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()

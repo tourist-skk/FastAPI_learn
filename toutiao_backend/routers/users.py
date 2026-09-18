@@ -6,6 +6,8 @@ from config.db_conf import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import Depends,HTTPException,status
 from schemes.users import UserRequest
+from utils.auth import get_current_user
+from models.users import User
 
 router = APIRouter(prefix="/api/user",tags=["users"])
 
@@ -50,12 +52,27 @@ async def login(
     user_request: UserRequest,
     db: AsyncSession = Depends(get_db, scope="function")
     ):
+    # 登陆逻辑:
     # 1. 检查用户名是否存在
-    existing_user = await users.get_user_by_username(db, user_request.username)
     # 2. 匹配用户名和密码
-    is_valid = await users.verify_password(user_request.password, existing_user.password)
-    if not is_valid:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="密码错误")
-    user_token = await users.create_user_token(db, existing_user.id)
+    # 3. 生成访问令牌
+    # 4. 响应结果
 
+    existing_user = await users.authenticate_user(db, user_request)
+    # 具体的业务错误还是需要写if判断
+    if not existing_user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户名或密码错误")
+    # 2. 匹配用户名和密码
+    user_token = await users.create_user_token(db, existing_user.id)
+    # model_validate 会从输入参数中提取 调用类的属性
     return success_response(message="登录成功",data=UserAuthResponse(token=user_token.token,user_Info=UserInfoResponse.model_validate(existing_user)))
+
+
+@router.get("/info")
+async def get_user_info(user: User = Depends(get_current_user)):
+    # 有token没有过期，才能获取用户信息
+    # 前端通过 Authorization 传递 token，由认证依赖验证后注入当前用户。
+    # 需要放到中间件吗?
+    # 这里不需要返回token字段
+    user_info = UserInfoResponse.model_validate(user)
+    return success_response(message="获取用户信息成功",data=user_info)

@@ -9,4 +9,4 @@ def hash_password(password: str) -> str:
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     pwd = plain_password.encode("utf-8")
-    return bcrypt.verifypw(pwd, hashed_password.encode("utf-8"))
+    return bcrypt.checkpw(pwd, hashed_password.encode("utf-8"))

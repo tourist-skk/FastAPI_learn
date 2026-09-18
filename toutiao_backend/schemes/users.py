@@ -24,12 +24,13 @@ class UserInfoResponse(UserInfoBase):
 
 # 响应data的数据类型
 class UserAuthResponse(BaseModel):
-    token: str
+    token: str# 比之前的多了token字段，用于返回登录成功后的token
     user_Info: UserInfoResponse = Field(alias="userInfo",description="用户信息")
 
     # 模型类配置
     model_config = ConfigDict(
         populate_by_name=True, # 允许通过字段名而不是字段索引来设置值
         from_attributes=True # 从数据库模型中获取值，而不是从请求体中获取值
+        # 只有设置 from_attributes=True 才能从使用model_validate方法将数据库模型转换为UserInfoResponse模型
     )
     

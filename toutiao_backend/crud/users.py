@@ -1,5 +1,5 @@
 from models.users import User, UserToken
-from schemes.users import UserRequest,UserUpdateRequest
+from schemes.users import UserRequest,UserUpdateRequest,UserUpdatePasswordRequest
 from datetime import datetime
 from datetime import timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -90,9 +90,51 @@ async def update_user_info(db: AsyncSession, username: str, user_update_request:
     if result.rowcount == 0:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="用户不存在")
     # 2. 提交事务
-    await db.commit()
-    # 3. 查询更新后的用户信息
+    # await db.commit()
     # 也可以直接输入 user，然后在这里db.refresh(user)
     user = await get_user_by_username(db, username)
     
+    # 3. 查询更新后的用户信息
+    await db.refresh(user)
+    
     return user
+
+async def update_user_password(db: AsyncSession, username: str, user_update_password_request: UserUpdatePasswordRequest) -> None:
+    # 1. 验证旧密码是否正确
+    user = await get_user_by_username(db, username)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="用户不存在")
+    is_valid = verify_password(user_update_password_request.old_password, user.password)
+    if not is_valid:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="旧密码错误")
+    if user_update_password_request.new_password == user_update_password_request.old_password:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="新密码不能与旧密码相同")
+    # 2. 更新新密码 : 将新密码加密后更新到数据库中
+    user_new_password = hash_password(user_update_password_request.new_password)
+    update_stmt = update(User).where(User.username == username).values(password=user_new_password)
+    await db.execute(update_stmt)
+    # 确保SQLAlchemy 接管该对象，避免会话过期导致不能提交事务
+    #await db.commit()
+    # 4. 查询更新后的用户信息
+    await db.refresh(user)
+    return user
+
+# # 修改密码：验证旧密码 -> 新密码加密 -> 修改密码
+# async def change_password(
+#     db: AsyncSession,
+#     user: User,
+#     old_password: str,
+#     new_password: str
+# ):
+#     if not security.verify_password(old_password, user.password):
+#         return False
+ 
+#     hashed_new_pwd = security.get_hash_password(new_password)
+#     user.password = hashed_new_pwd
+ 
+#     # 更新：由 SQLAlchemy 真正接管这个 User 对象，确保可以 commit
+#     # 规避 session 过期或关闭导致的不能提交的问题
+#     db.add(user)
+#     await db.commit()
+#     await db.refresh(user)
+#     return True

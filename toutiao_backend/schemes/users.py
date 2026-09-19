@@ -14,6 +14,13 @@ class UserUpdateRequest(BaseModel):
     phone: Optional[str] = Field(None,max_length=20,description="用户手机号")
     gender: Optional[str] = Field(None,max_length=10,description="用户性别")
 
+# 请求更新密码的请求体
+class UserUpdatePasswordRequest(BaseModel):
+    # 这里的alias 只影响 JSON 字段名，Python 属性名要用 old_password / new_password。
+    old_password: str = Field(...,alias="oldPassword",description="旧密码")
+    new_password: str = Field(...,min_length=6,alias="newPassword",description="新密码")
+
+
 class UserInfoBase(BaseModel):
     nickname: Optional[str] = Field(None,max_length=50,description="用户昵称")
     bio: Optional[str] = Field(None,max_length=500,description="用户简介")

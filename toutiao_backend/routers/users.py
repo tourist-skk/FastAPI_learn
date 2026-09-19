@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 from utils.response import success_response
-from schemes.users import UserRequest,UserAuthResponse,UserInfoResponse
+from schemes.users import UserRequest,UserAuthResponse,UserInfoResponse,UserUpdatePasswordRequest
 from crud import users
 from config.db_conf import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -86,3 +86,10 @@ async def update_user_info(user_update_request: UserUpdateRequest,user: User = D
     # 2. 响应结果
     user_info = UserInfoResponse.model_validate(user)
     return success_response(message="更新用户信息成功",data=user_info)
+
+@router.put("/password")
+async def change_password(user_update_password_request: UserUpdatePasswordRequest,user: User = Depends(get_current_user),db: AsyncSession = Depends(get_db, scope="function")):
+    # 1. 更新用户密码
+    await users.update_user_password(db, user.username, user_update_password_request)
+    # 2. 响应结果
+    return success_response(message="更新用户密码成功")

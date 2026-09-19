@@ -5,7 +5,7 @@ from crud import users
 from config.db_conf import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import Depends,HTTPException,status
-from schemes.users import UserRequest
+from schemes.users import UserUpdateRequest
 from utils.auth import get_current_user
 from models.users import User
 
@@ -76,3 +76,13 @@ async def get_user_info(user: User = Depends(get_current_user)):
     # 这里不需要返回token字段
     user_info = UserInfoResponse.model_validate(user)
     return success_response(message="获取用户信息成功",data=user_info)
+
+# 为什么这里的参数没有db
+# 方法思路: 进入请求 -> 检查token有效性 -> 从token中获取用户信息 -> 更新用户信息 -> 返回成功
+@router.put("/update")
+async def update_user_info(user_update_request: UserUpdateRequest,user: User = Depends(get_current_user),db: AsyncSession = Depends(get_db, scope="function")):
+    # 1. 更新用户信息
+    user = await users.update_user_info(db, user.username, user_update_request)
+    # 2. 响应结果
+    user_info = UserInfoResponse.model_validate(user)
+    return success_response(message="更新用户信息成功",data=user_info)

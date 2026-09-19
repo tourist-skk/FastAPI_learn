@@ -1,9 +1,9 @@
 from models.users import User, UserToken
-from schemes.users import UserRequest
+from schemes.users import UserRequest,UserUpdateRequest
 from datetime import datetime
 from datetime import timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select,update
 from typing import Optional
 from fastapi import HTTPException,status
 from utils.security import hash_password,verify_password
@@ -79,3 +79,20 @@ async def get_user_by_token(db: AsyncSession, token: str) -> Optional[User]:
     stmt = select(User).where(User.id == db_token.user_id)
     result = await db.execute(stmt)
     return result.scalar_one_or_none()
+
+async def update_user_info(db: AsyncSession, username: str, user_update_request: UserUpdateRequest) -> None:
+    # 1. 更新用户信息
+    # model_dump: 将pydantic模型实例转换为字典
+    # **: 展开字典，将键值对作为参数传递给 values 方法
+    # 没有设置值的不更新
+    stmt = update(User).where(User.username == username).values(**user_update_request.model_dump(exclude_unset=True,exclude_none=True))
+    result = await db.execute(stmt)
+    if result.rowcount == 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="用户不存在")
+    # 2. 提交事务
+    await db.commit()
+    # 3. 查询更新后的用户信息
+    # 也可以直接输入 user，然后在这里db.refresh(user)
+    user = await get_user_by_username(db, username)
+    
+    return user

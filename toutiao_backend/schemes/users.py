@@ -7,6 +7,13 @@ class UserRequest(BaseModel):
     username: str
     password: str
 
+class UserUpdateRequest(BaseModel):
+    nickname: Optional[str] = Field(None,max_length=50,description="用户昵称")
+    bio: Optional[str] = Field(None,max_length=500,description="用户简介")
+    avatar: Optional[str] = Field(None,max_length=255,description="用户头像")
+    phone: Optional[str] = Field(None,max_length=20,description="用户手机号")
+    gender: Optional[str] = Field(None,max_length=10,description="用户性别")
+
 class UserInfoBase(BaseModel):
     nickname: Optional[str] = Field(None,max_length=50,description="用户昵称")
     bio: Optional[str] = Field(None,max_length=500,description="用户简介")

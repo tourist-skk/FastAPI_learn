@@ -164,6 +164,16 @@ FavoriteCheckResponse(is_favorite=True)  # 也可以
 
 本接口只是内部用蛇形字段构造响应、对前端输出驼峰字段，使用 `serialization_alias` 更直接。
 
+### 5.3 别名参数的系统总结
+
+本节只覆盖了本接口用到的 `alias` / `serialization_alias` 两个参数。别名相关的参数其实还有 `validation_alias`、`AliasChoices`、`AliasPath`、`alias_generator`，以及 `populate_by_name` / `serialize_by_alias` 等开关；`Query(alias=...)` 和 `Header(alias=...)` 又是另一套机制。
+
+这些内容连同真值表和选用规则，整理在 [15-Pydantic与FastAPI的别名参数](../00-python基础补充/15-Pydantic与FastAPI的别名参数.md)。挑重点说三条：
+
+- **选参数先问"这个模型是收还是发"**：收用 `alias`，发用 `serialization_alias`，两者都是就 `alias` + `populate_by_name`。本接口的模型是"发"，所以 `serialization_alias` 是唯一正确选择。
+- **`validation_alias` 完全不影响输出**，即使传了 `by_alias=True` 出来的仍是字段名。
+- **Pydantic 和 FastAPI 的默认值相反**：`model_dump()` 默认 `by_alias=False`，而 `jsonable_encoder()` 和 `response_model` 默认 `by_alias=True`。本接口输出能是驼峰，靠的是后者。
+
 ## 六、前端收到结果后怎样点亮星标？
 
 [前端收藏 store](../../xwzx-news/src/store/modules/favorite.js) 从 `response.data.data.isFavorite` 取布尔值，返回给 [新闻详情页](../../xwzx-news/src/views/NewsDetail.vue)。详情页在请求成功且结果来自后端时：

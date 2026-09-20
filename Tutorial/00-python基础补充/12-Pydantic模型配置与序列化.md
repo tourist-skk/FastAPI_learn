@@ -152,28 +152,34 @@ resp = UserAuthResponse(
 )
 
 resp.model_dump()
-# 默认结果（by_alias=True，输出别名）：
+# 默认结果（by_alias=False，输出字段名）：
 # {
 #     "token": "abc123",
-#     "userInfo": {"id": 1, "username": "tom"}
+#     "user_Info": {"id": 1, "username": "tom"}
 # }
 ```
 
 ### 关键参数 by_alias
 
-- `by_alias=True`（默认）：输出用别名 `userInfo`，适合给前端。
-- `by_alias=False`：输出用字段名 `user_Info`，适合 Python 内部使用。
+- `by_alias=False`（**默认**）：输出用字段名 `user_Info`，适合 Python 内部使用。
+- `by_alias=True`：输出用别名 `userInfo`，适合给前端。
 
 ```python
+resp.model_dump()                # {"token": "...", "user_Info": {...}}  ← 默认不用别名
 resp.model_dump(by_alias=True)   # {"token": "...", "userInfo": {...}}
 resp.model_dump(by_alias=False)  # {"token": "...", "user_Info": {...}}
 ```
+
+> ⚠️ **容易踩的坑：Pydantic 和 FastAPI 的默认值是相反的。**
+> `model_dump()` 默认 `by_alias=False`（输出字段名），而 FastAPI 的 `jsonable_encoder()` 和 `response_model` 默认 `by_alias=True`（输出别名）。
+> 项目里 `success_response()` 能输出驼峰键，靠的是 `jsonable_encoder()` 的默认值，不是 Pydantic 的。
+> 完整对照见 [15-Pydantic与FastAPI的别名参数](15-Pydantic与FastAPI的别名参数.md) 第六节。
 
 ### 其他常用参数
 
 | 参数 | 作用 |
 |------|------|
-| `by_alias=True` | 输出用别名（默认） |
+| `by_alias=True` | 输出用别名（默认为 `False`，即输出字段名） |
 | `exclude_none=True` | 值为 `None` 的字段不输出 |
 | `exclude_unset=True` | 只输出主动设置过的字段 |
 | `mode="json"` | 转成纯 JSON 兼容类型（如 `datetime` 转字符串） |
@@ -248,8 +254,9 @@ result = {"code": 0, "message": "success", "data": payload}
 3. `ConfigDict` 是一个限定好 key 和类型的配置字典。
 4. `populate_by_name=True` = 允许用字段名（而非只别名）赋值。
 5. `from_attributes=True` = 允许从 ORM 对象读取数据。
-6. `model_dump` 负责输出（序列化），默认用别名。
+6. `model_dump` 负责输出（序列化），**默认用字段名**；要输出别名得传 `by_alias=True`。注意 FastAPI 的 `jsonable_encoder()` 默认相反，是用别名的。
 7. `model_validate` 负责输入（反序列化），可吃 dict 或 ORM 对象。
+8. 别名参数不止 `alias` 一个，还有 `validation_alias` / `serialization_alias` / `AliasChoices` / `alias_generator`，选用规则见 [15-Pydantic与FastAPI的别名参数](15-Pydantic与FastAPI的别名参数.md)。
 
 ### 版本对照
 

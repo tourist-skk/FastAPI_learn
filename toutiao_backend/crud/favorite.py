@@ -1,7 +1,7 @@
-from fastapi import Depends
+from fastapi import Depends, HTTPException
 from models.favorite import Favorite
 from config.db_conf import get_db
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -35,3 +35,14 @@ async def add_favorite(
     await db.flush()
     #await db.refresh(favorite)
     return favorite
+
+
+async def remove_favorite(
+        news_id: int,
+        user_id: int,
+        db: AsyncSession = Depends(get_db)
+    ):
+    stmt = delete(Favorite).where(Favorite.user_id == user_id, Favorite.news_id == news_id)
+    result = await db.execute(stmt)
+    await db.flush()
+    return result.rowcount > 0

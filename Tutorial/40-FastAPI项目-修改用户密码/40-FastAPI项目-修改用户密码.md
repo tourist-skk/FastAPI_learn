@@ -85,7 +85,10 @@ class UserUpdatePasswordRequest(BaseModel):
 
 `alias` 的作用是：**Python 侧用蛇形命名 `old_password`，JSON 侧用驼峰命名 `oldPassword`**。前端 JavaScript 习惯驼峰，Python 习惯蛇形，`alias` 就是这两套命名习惯之间的翻译层。
 
-需要注意的是，这个模型**没有**设置 `populate_by_name=True`，所以只认驼峰这一种写法。实测：
+需要注意的是，这个模型(指 `UserUpdatePasswordRequest` 类)**没有**设置 `populate_by_name=True`，所以只认驼峰这一种写法。实测：
+
+FastAPI 看到这个参数类型是 UserUpdatePasswordRequest，就会在调用 change_password 之前先解析 JSON 请求体并调用 Pydantic 校验。蛇形 old_password 不匹配 alias，校验失败，于是直接返回 422，根本不会执行到 change_password 函数体，更不会执行 crud/users.py#L107 的 verify_password。
+即 请求体里的 JSON 字段名 决定结果
 
 | 请求体 | 结果 |
 | --- | --- |

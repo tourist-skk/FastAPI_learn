@@ -100,6 +100,8 @@ PostgreSQL: SELECT "user".username FROM "user" WHERE "user".id > %(id_1)s ORDER 
 
 ### 4. 事件钩子
 
+PRAGMA foreign_keys 是连接级别的设置，不是全局/永久设置。它默认 OFF，每条新建立的底层连接都要重新执行一次 PRAGMA foreign_keys=ON，否则那条连接的外键约束就不生效。
+
 ```python
 @event.listens_for(engine.sync_engine, "connect")
 def _set_sqlite_foreign_keys(dbapi_connection, connection_record):
@@ -138,7 +140,7 @@ SQL   : SELECT user.id, user.username, user.password, ... FROM user WHERE user.u
 
 恶意字符串老老实实待在**参数**里，没有进入 SQL 文本。这就是 SQL 注入防护的原理 —— 不是靠"过滤危险字符"，而是靠**语句和数据分离**。
 
-只要不手写 `text("SELECT ... WHERE name='" + x + "'")` 这种字符串拼接，就不会有注入问题。
+**只要不手写 `text("SELECT ... WHERE name='" + x + "'")` 这种字符串拼接，就不会有注入问题。**
 
 ### 3. 语句是可以拆开组合的
 
@@ -210,7 +212,19 @@ username: Mapped[str] = mapped_column(String(50), unique=True)
 
 项目里 `Bases.py` 用的是 `default` + `onupdate`，都是 Python 侧计算。而建库 SQL 里写的 `DEFAULT CURRENT_TIMESTAMP` 是数据库侧的默认值 —— **两套机制同时存在**，谁先写上算谁的。
 
-这也解释了第 40 节的一个现象：`updated_at` 之所以在 Core 和 ORM 两条路径上都自动刷新，是因为 `onupdate` 定义在 Core 的列对象上，两层都能生效。
+正因为两套机制并存，可能会出现「你以为数据库会刷新，其实没刷新」或反过来。比如纯靠数据库 DEFAULT CURRENT_TIMESTAMP 时，SQLAlchemy 内存里的对象不会自动知道数据库算出来的值（因为值不是 Python 给的），需要 refresh 才能拿到。而用 Python 的 default/onupdate 时，值在内存里就已经有了。这也是为什么项目里更倾向用 Python 侧的 default + onupdate。
+
+这也解释了第 40 节的一个现象：`updated_at` 之所以在 Core 和 ORM 两条路径上都自动刷新，是因为 `onupdate` 定义在 Core 的列对象上，两层都能生效(不管你是用 Core 风格还是 ORM 风格去更新数据，updated_at 都会自动刷新)。所以「自动更新 updated_at」这个规则，被定义在了一个共享的地方（Core 列对象），于是无论哪条路走下来都会碰到它。
+
+* Core 路径（现行 crud/users.py#L114 的写法）：
+```python
+update(User).where(...).values(password=user_new_password)
+```
+* ORM 路径（现行 crud/users.py#L120 的写法）：
+```python
+user.password = user_new_password
+```
+
 
 ### 4. 还没用到的：relationship
 
@@ -278,6 +292,8 @@ AsyncSessionLocal = async_sessionmaker(bind=engine, expire_on_commit=False, clas
 ```
 
 `expire_on_commit` 默认是 `True`，意思是 commit 之后把所有对象标记为过期。同步代码下这没问题，下次访问属性会自动重新查。但**异步代码下会直接报错**。实测：
+
+因为你在调用读取属性时，会有隐式IO
 
 ```text
 expire_on_commit=True  -> commit 后读 u.username 报错: MissingGreenlet

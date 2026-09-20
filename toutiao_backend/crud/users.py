@@ -102,8 +102,6 @@ async def update_user_info(db: AsyncSession, username: str, user_update_request:
 async def update_user_password(db: AsyncSession, username: str, user_update_password_request: UserUpdatePasswordRequest) -> None:
     # 1. 验证旧密码是否正确
     user = await get_user_by_username(db, username)
-    if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="用户不存在")
     is_valid = verify_password(user_update_password_request.old_password, user.password)
     if not is_valid:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="旧密码错误")

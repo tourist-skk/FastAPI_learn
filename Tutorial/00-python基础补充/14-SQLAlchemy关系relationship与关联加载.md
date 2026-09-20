@@ -2,7 +2,9 @@
 
 本篇承接 [13-SQLAlchemy学习路线](13-SQLAlchemy学习路线.md) 中"下一步最值得补的 relationship"这一节，把 `relationship()` 讲完整，并补上理解它绕不开的两个问题：**为什么异步下访问关联属性会报 `MissingGreenlet`，以及 `await` 到底扮演什么角色。**
 
-读完应当能回答：`ForeignKey` 和 `relationship()` 有什么区别？一对多/多对一怎么声明？`selectinload` 解决什么问题？为什么同步访问 `news.category` 没事、异步却报错？
+读完应当能回答：`ForeignKey` 和 `relationship()` 有什么区别？一对多/多对一怎么声明？`selectinload` 解决什么问题？为什么同步访问 `news.category` 没事、异步却报错？`back_populates` 和 `backref` 该用哪个？删父记录时子记录怎么办？
+
+第八节把 `relationship()` 的参数按五组职责逐一说明，每组均附实测结果；其余章节的演示依据当前项目模型整理。
 
 内容依据当前项目模型整理。演示沿用项目里的 `News` ↔ `Category`、`User` ↔ `UserToken` 两组关系。
 
@@ -248,7 +250,236 @@ category = news.category        # ❌ 普通属性访问，没有 await
 
 所以问题的本质不是"执行顺序"或"没查完跳下一步"，而是：**懒加载 = 隐式 IO；异步规则 = 不能有隐式 IO；两者冲突。**
 
-## 八、落地建议
+## 八、relationship() 的参数详解
+
+前面只用到了 `back_populates` 一个参数。`relationship()` 的参数很多，但按**职责**分只有五组。本节逐组说明，每组都附实测结果。
+
+### 8.1 第一组：两边怎么配对
+
+这组回答"A 类的属性和 B 类的属性，怎么知道彼此是同一条关系的两面"。有三种写法。
+
+**写法一：`back_populates` —— 两边都写，互相指认（2.0 推荐）**
+
+```python
+class Category(Base):
+    news_list: Mapped[list["News"]] = relationship(back_populates="category")
+
+class News(Base):
+    category: Mapped["Category"] = relationship(back_populates="news_list")
+```
+
+它的实际作用是**让内存里的两边保持同步**。实测（注意此时还没 `add`、没 `flush`）：
+
+```text
+n.cat = c 之后（还没 add/flush）→ c.news = ['AI 新闻']   ✅ 同步
+```
+
+**写法二：`backref` —— 只写一边，自动给对方装属性（遗留风格）**
+
+```python
+class News(Base):
+    category: Mapped["Category"] = relationship(backref="news_list")
+    # Category 类体里完全不用写 news_list
+```
+
+功能上和 `back_populates` **完全等价**，区别只在"写在哪"。但实测暴露了它的问题：
+
+```text
+映射配置前，Cat 有 news 属性吗? False    ← 源码里确实没有
+映射配置后，Cat 有 news 属性吗? True     ← SQLAlchemy 运行时塞进去的
+```
+
+属性是**运行时动态加上去的**，于是：
+
+- 编辑器不知道 `Category.news_list` 存在，没有补全、没有跳转
+- 类型检查器（mypy / pyright）会报"未定义属性"
+- 读代码的人打开 `Category` 类，看不出它有这个属性
+
+这就是 SQLAlchemy 2.0 把 `backref` 降级为"遗留风格"、推荐 `back_populates` 的原因。**新代码一律用 `back_populates`。**
+
+**写法三（错误）：两边都写，但不配对**
+
+```python
+class Category(Base):
+    news_list: Mapped[list["News"]] = relationship()     # 没有 back_populates
+
+class News(Base):
+    category: Mapped["Category"] = relationship()        # 也没有
+```
+
+这不是"单向关系"，而是**两个互不知情的独立关系，却操作同一个外键列**。实测内存不同步：
+
+```text
+n.cat = c 之后（还没 add/flush）→ c.news = []   ❌ 没同步
+```
+
+SQLAlchemy 自己会发警告：
+
+> SAWarning: relationship 'New2.cat' will copy column cat2.id to column new2.cat_id, which conflicts with relationship(s): 'Cat2.news' ... consider if these relationships should be linked with back_populates
+
+真正的单向关系是**只在一边声明**（第四节末尾那种写法），那样不会有警告。
+
+### 8.2 第二组：什么时候去查关联数据（lazy）
+
+第六节讲的懒加载与预加载，在参数层面就是 `lazy=`。实测"查 10 条新闻，逐条访问 `n.cat.name`"发出多少条 SELECT：
+
+| `lazy=` | 含义 | SELECT 条数 |
+| --- | --- | --- |
+| `"select"`（默认） | 懒加载，用到才查 | **11** |
+| `"selectin"` | 主查询后，用 `IN` 再补一次 | **2** |
+| `"joined"` | 一条 JOIN 查完 | **1** |
+| `"raise"` | 禁止懒加载，直接报错 | 抛异常 |
+
+> 实验中发现的一个细节：如果那 10 条新闻只属于 3 个分类，`lazy="select"` 是 **4 条**而不是 11 条 —— 身份映射把重复的分类缓存了。所以 N+1 里的 N 是**不重复的关联行数**，不是主表行数。
+
+其余取值：`"subquery"`（老式预加载，一般用 `selectin` 代替）、`"noload"`（永远返回空）、`"dynamic"` / `"write_only"`（返回可继续过滤的查询对象，适合超大集合）。
+
+**`lazy="raise"` 在异步项目里特别值得用。** 实测异步下访问未预加载的关联属性：
+
+```text
+lazy='select'   -> MissingGreenlet: greenlet_spawn has not been called; can't call await_only() here
+lazy='raise'    -> InvalidRequestError: 'N.cat' is not available due to lazy='raise'
+```
+
+第七节花了很大篇幅才解释清楚 `MissingGreenlet` 是怎么回事 —— 因为它的报错信息完全看不出问题在哪。`lazy="raise"` 直接告诉你"这个属性没预加载"。**把模型全设成 `lazy="raise"`，等于强制自己每次都显式预加载**，漏了立刻暴露。
+
+**`lazy=` 是默认值，`options()` 是单次覆盖：**
+
+```python
+# 模型上设默认
+cat: Mapped["Category"] = relationship(lazy="raise")
+
+# 查询时临时指定，覆盖默认
+stmt = select(News).options(selectinload(News.category))
+```
+
+实测 `options(selectinload(...))` 同样是 2 条 SELECT。推荐组合：**模型设 `lazy="raise"`，查询时按需 `options()`**。
+
+### 8.3 第三组：怎么找到对方
+
+| 参数 | 什么时候需要 |
+| --- | --- |
+| `foreign_keys` | 有**多个外键指向同一张表**，SQLAlchemy 猜不出用哪个 |
+| `secondary` | 多对多，指定中间表 |
+| `primaryjoin` / `secondaryjoin` | 连接条件不是简单的外键相等 |
+| `remote_side` | 自引用关系（树形结构），指明哪边是"父" |
+
+**`foreign_keys` —— 项目里的 `related_news` 表正需要它。**
+
+`related_news` 有 `news_id` 和 `related_news_id` **两个外键都指向 `news.id`**。不指定的话：
+
+```text
+不加 foreign_keys → AmbiguousForeignKeysError
+  Could not determine join condition between parent/child tables on relationship ...
+```
+
+正确写法：
+
+```python
+class RelatedNews(Base):
+    news_id: Mapped[int] = mapped_column(ForeignKey("news.id"))
+    related_news_id: Mapped[int] = mapped_column(ForeignKey("news.id"))
+
+    news: Mapped["News"] = relationship(foreign_keys=[news_id])
+    related: Mapped["News"] = relationship(foreign_keys=[related_news_id])
+```
+
+**`secondary` —— 多对多，中间表不用定义模型类。**
+
+项目的 `favorite` 表（user ↔ news）就是典型多对多：
+
+```python
+favorite = Table("favorite", Base.metadata,
+    Column("user_id", Integer, ForeignKey("user.id"), primary_key=True),
+    Column("news_id", Integer, ForeignKey("news.id"), primary_key=True))
+
+class User(Base):
+    favorites: Mapped[list["News"]] = relationship(secondary=favorite, back_populates="fans")
+
+class News(Base):
+    fans: Mapped[list["User"]] = relationship(secondary=favorite, back_populates="favorites")
+```
+
+实测：
+
+```text
+小明收藏了: ['AI 新闻', '体育新闻']
+收藏『AI 新闻』的人: ['小明']   ← 中间表无需定义模型类
+```
+
+**注意一个前提**：`secondary` 适合中间表只有两个外键的情况。项目的 `favorite` 表还有 `id` 和 `created_at` 字段 —— 如果需要读"什么时候收藏的"，就不能用 `secondary`，得把 `Favorite` 定义成正式模型类，拆成两个一对多。这种模式叫 **association object**。
+
+### 8.4 第四组：删除的时候连带做什么
+
+这组最容易出事，而且**加了 `relationship()` 之后一定会碰到**。实测删除一个有 3 个 token 的 user：
+
+| 配置 | 发出的 SQL | 结果 |
+| --- | --- | --- |
+| 默认 `"save-update, merge"` | 试图 `UPDATE t SET u_id=NULL` | ❌ **IntegrityError: NOT NULL constraint failed** |
+| `cascade="all, delete-orphan"` | `DELETE FROM t` + `DELETE FROM u` | ✅ 子记录被删 |
+| `delete-orphan` + `passive_deletes=True` | 只有 `DELETE FROM u` | ✅ 子记录被数据库删 |
+
+**默认行为是把子记录的外键置空**，而 `user_token.user_id` 是 `NOT NULL`，所以会直接报错。加了 `relationship()` 却不配 `cascade`，删用户就会挂。
+
+**`passive_deletes=True` 是本项目的正确选项。** 建库 SQL 里已经写了 `ON DELETE CASCADE`：
+
+```sql
+CONSTRAINT "fk_user_token_user"
+  FOREIGN KEY ("user_id") REFERENCES "user" ("id")
+  ON DELETE CASCADE ON UPDATE CASCADE
+```
+
+`passive_deletes=True` 的意思是"**这活儿数据库会干，ORM 别插手**"。对比 SQL 数量就很清楚：不加它，ORM 会先把所有子记录查进内存再逐个 DELETE；加了它，只发一条 DELETE，剩下的交给数据库外键。子记录越多差别越大。
+
+```python
+tokens: Mapped[list["UserToken"]] = relationship(
+    back_populates="user",
+    cascade="all, delete-orphan",
+    passive_deletes=True,        # 配合建表 SQL 里的 ON DELETE CASCADE
+)
+```
+
+> `cascade` 是逗号分隔的字符串，可选值有 `save-update`、`merge`、`delete`、`delete-orphan`、`refresh-expire`、`expunge`。`"all"` 等于除 `delete-orphan` 外的全部，所以 `"all, delete-orphan"` 是常见的完整写法。`delete-orphan` 额外表示"子记录脱离父记录就删掉"。
+
+### 8.5 第五组：集合的形态
+
+| 参数 | 作用 |
+| --- | --- |
+| `uselist=False` | 强制单个对象而非列表（一对一）。**2.0 里一般不用写** —— `Mapped["X"]` 和 `Mapped[list["X"]]` 已经表达了 |
+| `order_by` | 集合的排序，如 `order_by="News.publish_time.desc()"` |
+| `collection_class` | 用 `set` 或 `dict` 代替 `list` |
+| `viewonly=True` | 只读关系，不参与写入。做"只是想方便查询"的派生关系时用 |
+
+### 8.6 本项目的建议配置
+
+```python
+class User(Base):
+    tokens: Mapped[list["UserToken"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        lazy="raise",
+    )
+
+class Category(Base):
+    news_list: Mapped[list["News"]] = relationship(
+        back_populates="category",
+        order_by="News.publish_time.desc()",
+        lazy="raise",
+    )
+
+class News(Base):
+    category: Mapped["Category"] = relationship(back_populates="news_list", lazy="raise")
+```
+
+四条原则：
+
+1. 一律 `back_populates`，不用 `backref`
+2. 一律 `lazy="raise"`，查询时用 `options()` 预加载
+3. 子表外键是 `NOT NULL` 的，必须配 `cascade` + `passive_deletes=True`
+4. `related_news` 必须写 `foreign_keys`
+
+## 九、落地建议
 
 按依赖顺序，最值得先补的是一对多/多对一（项目马上要用的"新闻 → 分类""用户 → token"）：
 
@@ -269,11 +500,15 @@ news = (await db.execute(stmt)).scalar_one_or_none()
 category = news.category   # ✅ 已经预加载，安全
 ```
 
-## 九、小结
+## 十、小结
 
 - `ForeignKey` 管"数据库里怎么连"，`relationship` 管"对象之间怎么跳"；前者是约束，后者是导航。
 - `relationship` 默认懒加载，会引发 N+1；用 `selectinload` / `joinedload` 预加载解决。
 - 异步项目里懒加载是隐式 IO，接不上事件循环，会抛 `MissingGreenlet`；所以必须显式预加载。
+- `back_populates` 和 `backref` 功能等价，区别在写在哪；`backref` 的属性是运行时塞进去的，编辑器和类型检查器看不到，所以 2.0 推荐 `back_populates`。
+- 两边都声明却不配对，不是"单向"而是 bug，SQLAlchemy 会发 `SAWarning`。
+- `lazy="raise"` 能把难懂的 `MissingGreenlet` 换成直说问题的报错，异步项目值得默认开启。
+- 子表外键是 `NOT NULL` 时，不配 `cascade` 会在删除父记录时报 `IntegrityError`；建表 SQL 已有 `ON DELETE CASCADE` 的，再配上 `passive_deletes=True` 把删除交给数据库。
 
 相关笔记：[03-同步与异步](03-同步与异步.md)、[13-SQLAlchemy学习路线](13-SQLAlchemy学习路线.md)、[09-SQLAlchemy查询结果与取值](09-SQLAlchemy查询结果与取值.md)。
 

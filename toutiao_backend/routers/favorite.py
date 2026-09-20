@@ -7,8 +7,8 @@ from utils.auth import get_current_user
 from utils.response import success_response
 from config.db_conf import get_db
 from models.users import User
-from crud.favorite import is_news_favorite
-from schemes.favorite import FavoriteCheckResponse
+from crud import favorite
+from schemes.favorite import FavoriteCheckResponse, FavoriteAddRequest
 
 
 
@@ -17,7 +17,7 @@ router = APIRouter(prefix="/api/favorite", tags=["favorite"])
 @router.get("/check")
 async def check_favorite(
         db: AsyncSession = Depends(get_db), 
-        user: User = Depends(get_current_user), 
+        user: User = Depends(get_current_user),
         news_id: int = Query(..., alias="newsId", description="新闻ID")
     ) :
     """
@@ -27,7 +27,20 @@ async def check_favorite(
     }
     返回的data必须是 字典
     """
-    is_favorite = await is_news_favorite(user.id, news_id, db)
+    is_favorite = await favorite.is_news_favorite(user.id, news_id, db)
 
     return success_response(message="检查收藏成功",data=FavoriteCheckResponse(is_favorite=is_favorite))
     # 是否等同于 return success_response(message="检查收藏成功",data={"is_favorite": is_favorite})
+
+@router.post("/add")
+async def add_favorite(
+        request: FavoriteAddRequest,
+        db: AsyncSession = Depends(get_db, scope="function"),
+        user: User = Depends(get_current_user),
+    ) :
+    """
+    添加当前用户对指定新闻的收藏，重复添加时返回已有记录。
+    """
+    result = await favorite.add_favorite(request.news_id, user.id, db)
+
+    return success_response(message="收藏成功",data=result)

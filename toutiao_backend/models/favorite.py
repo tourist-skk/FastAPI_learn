@@ -11,6 +11,7 @@ class Favorite(ModelBase):
 
     __table_args__ = (
         # 唯一约束, 当前用户对当前新闻只能收藏一次
+        # 保证表中的某几列组合起来不能出现重复值。
         UniqueConstraint("user_id", "news_id", name="unique_favorite"),
     )
 

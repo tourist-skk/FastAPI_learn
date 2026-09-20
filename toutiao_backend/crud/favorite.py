@@ -14,3 +14,24 @@ async def is_news_favorite(
     stmt = select(Favorite).where(Favorite.user_id == user_id, Favorite.news_id == news_id)
     result = await db.execute(stmt)
     return result.scalar_one_or_none() is not None
+
+
+async def add_favorite(
+        news_id: int,
+        user_id: int,
+        db: AsyncSession = Depends(get_db)
+    ):
+    # existing = await db.scalar(
+    #     select(Favorite).where(Favorite.user_id == user_id, Favorite.news_id == news_id)
+    # )
+    # if existing is not None:
+    #     return existing
+
+    favorite = Favorite(
+        user_id=user_id,
+        news_id=news_id,
+    )
+    db.add(favorite)
+    await db.flush()
+    #await db.refresh(favorite)
+    return favorite

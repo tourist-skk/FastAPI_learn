@@ -1,3 +1,4 @@
+import logging
 import traceback
 from fastapi import Request
 
@@ -7,6 +8,10 @@ from fastapi.responses import JSONResponse
 from fastapi import status
 
 
+# 使用 Uvicorn 已配置的终端日志输出。
+logger = logging.getLogger("uvicorn.error")
+
+# 只控制响应中的错误详情，不控制终端日志。
 # 开发模式: 返回详细的错误信息
 # 生产模式: 返回简化的错误信息
 DEBUG_MODE = True
@@ -38,6 +43,12 @@ async def integrity_error_handler(request : Request, exc: IntegrityError):
     :param exc: 异常对象
     :return: JSONResponse
     """
+    logger.error(
+        "数据库约束异常：%s %s",
+        request.method,
+        request.url.path,
+        exc_info=exc,
+    )
     error_msg = str(exc.orig)
 
     if "username_UNIQUE" in error_msg or "Duplicate entry" in error_msg:
@@ -73,6 +84,12 @@ async def sqlalchemy_exception_handler(request : Request, exc: SQLAlchemyError):
     :param exc: 异常对象
     :return: JSONResponse
     """
+    logger.error(
+        "数据库操作异常：%s %s",
+        request.method,
+        request.url.path,
+        exc_info=exc,
+    )
     error_data = None
     if DEBUG_MODE:
         error_data = {

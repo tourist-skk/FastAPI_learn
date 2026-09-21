@@ -29,6 +29,10 @@ ENV/
 *.sqlite3-wal
 *.sqlite3-journal
 
+# ===== Redis =====
+dump.rdb
+appendonly.aof
+
 # ===== Node / 前端 =====
 node_modules/
 dist/

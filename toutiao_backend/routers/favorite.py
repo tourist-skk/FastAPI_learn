@@ -8,7 +8,7 @@ from utils.response import success_response
 from config.db_conf import get_db
 from models.users import User
 from crud import favorite
-from schemes.favorite import FavoriteCheckResponse, FavoriteAddRequest
+from schemes.favorite import FavoriteCheckResponse, FavoriteAddRequest, FavoriteListResponse
 
 
 
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/api/favorite", tags=["favorite"])
 
 @router.get("/check")
 async def check_favorite(
-        db: AsyncSession = Depends(get_db), 
+        db: AsyncSession = Depends(get_db),
         user: User = Depends(get_current_user),
         news_id: int = Query(..., alias="newsId", description="新闻ID")
     ) :
@@ -60,3 +60,53 @@ async def remove_favorite(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="收藏记录不存在")
     
     return success_response(message="移除收藏成功")
+
+
+@router.get("/list")
+async def get_favorite_list(
+        page: int = Query(1,ge=1, alias="page", description="页码"),
+        page_size: int = Query(10,ge=1,le=100, alias="pageSize", description="每页数量"),
+        db: AsyncSession = Depends(get_db),
+        user: User = Depends(get_current_user)
+    ) :
+    """
+    返回当前用户收藏的新闻列表
+      "data": {
+    "list": [
+      {
+        "id": 1,
+        "title": "新闻标题",
+        "description": "",
+        "image": "",
+        "author": "",
+        "publishTime": "2023-01-01T00:00:00",
+        "categoryId": 1,
+        "views": 1,
+        "favoriteTime": "2023-01-01T00:00:00"
+      }
+    ],
+    "total": 1,
+    "hasMore": false
+  }
+    """
+    result = await favorite.get_favorite_list(user.id, page, page_size, db)
+    total = await favorite.get_favorite_count(user.id, db)
+    has_more = (page - 1) * page_size + len(result) < total
+    return success_response(
+        message="收藏列表成功",
+        data=FavoriteListResponse(total=total, has_more=has_more, list=result),
+    )
+
+@router.delete("/clear")
+async def clear_favorite(
+        db: AsyncSession = Depends(get_db, scope="function"),
+        user: User = Depends(get_current_user),
+    ) :
+    """
+    清空当前用户的所有收藏记录
+    """
+    is_delete,count = await favorite.clear_favorite(user.id, db)
+    if not is_delete:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="收藏记录不存在")
+    return success_response(message=f"清空{count}条收藏")
+        

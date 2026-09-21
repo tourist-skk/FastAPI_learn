@@ -1,6 +1,6 @@
 # 负责挂载路由
 from fastapi import FastAPI
-from routers import news,users,favorite
+from routers import news,users,favorite,history
 from fastapi.middleware.cors import CORSMiddleware
 from utils.exception_handlers import register_exception_handlers
 # 创建FastAPI实例
@@ -11,6 +11,8 @@ app.include_router(news.router)
 app.include_router(users.router)
 # 挂载收藏路由
 app.include_router(favorite.router)
+# 挂载历史路由
+app.include_router(history.router)
 # 注册异常处理函数
 register_exception_handlers(app)
 

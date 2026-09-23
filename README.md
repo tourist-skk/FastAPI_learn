@@ -18,7 +18,8 @@
 | 前端 | Vue 3、Vite、Vue Router、Pinia、Vant、Axios、Vue-i18n |
 | 后端 | Python 3.11+、FastAPI |
 | 数据访问 | SQLAlchemy（异步） |
-| 数据库 | SQLite（开发）/ MySQL（`aiomysql`，生产） |
+| 数据库 | SQLite（`aiosqlite`，开发默认）/ MySQL（`aiomysql`，生产） |
+| 缓存 | Redis（`redis` 异步客户端） |
 | 后端依赖管理 | `uv`（`pyproject.toml` + `uv.lock`） |
 
 ### 目录结构
@@ -30,11 +31,51 @@ fastApi-learn/
 ├── pyproject.toml            # Python 项目配置与依赖
 ├── uv.lock                   # Python 依赖锁定文件
 ├── xwzx-news/                # 新闻浏览前端
-├── toutiao_backend/          # 新闻业务后端（FastAPI，待搭建）
+├── toutiao_backend/          # 新闻业务后端（FastAPI）
 ├── files/项目物料/            # 项目物料：接口规范、数据库 SQL、后端设计说明
 ├── Tutorial/                 # FastAPI 学习笔记
 ├── database_sqlite.py        # SQLite/SQLAlchemy 学习示例
 └── sql/                      # SQL 相关文件
+```
+
+后端目录结构：
+
+```text
+toutiao_backend/
+├── main.py                    # FastAPI 入口：创建应用、注册路由、CORS、异常处理器
+├── cache/                     # 缓存封装
+│   └── news_cache.py          # 新闻分类、列表缓存的 key 与读写
+├── config/                    # 应用配置与基础设施
+│   ├── db_conf.py             # 异步引擎、会话工厂、get_db 依赖
+│   └── cache_conf.py          # Redis 客户端与通用缓存读写/删除
+├── crud/                      # 数据库增删改查
+│   ├── users.py               # 用户数据操作
+│   ├── news.py                # 新闻、分类数据操作
+│   ├── news_cache.py          # 带缓存的数据查询
+│   ├── favorite.py            # 收藏数据操作
+│   └── history.py             # 浏览历史数据操作
+├── models/                    # SQLAlchemy 模型
+│   ├── Bases.py               # ORM 基类
+│   ├── users.py               # 用户表模型
+│   ├── news.py                # 新闻、分类表模型
+│   ├── favorite.py            # 收藏关系模型
+│   └── history.py             # 浏览记录模型
+├── routers/                   # HTTP 路由（按业务模块）
+│   ├── users.py               # 注册、登录、资料、密码接口
+│   ├── news.py                # 新闻分类、列表、详情接口
+│   ├── favorite.py            # 收藏接口
+│   └── history.py             # 浏览历史接口
+├── schemes/                   # Pydantic 请求与响应结构
+│   ├── users.py
+│   ├── news.py
+│   ├── favorite.py
+│   └── history.py
+└── utils/                     # 公共工具
+    ├── auth.py                # 当前用户解析（token 鉴权依赖）
+    ├── security.py            # 密码哈希、令牌生成与校验
+    ├── response.py            # 通用成功响应封装
+    ├── exception.py           # 业务异常
+    └── exception_handlers.py  # 全局异常处理器
 ```
 
 ### 功能模块
@@ -67,7 +108,13 @@ npm run dev
 uv sync
 ```
 
-后端完成基础代码后（`toutiao_backend/main.py` 中创建 `app = FastAPI(...)`）启动：
+后端依赖 Redis 缓存，启动前需先运行 Redis 服务（后端默认连接 `localhost:6379`）：
+
+```bash
+redis-server
+```
+
+随后启动后端：
 
 ```bash
 uv run uvicorn toutiao_backend.main:app --reload --host 127.0.0.1 --port 8000

@@ -1,10 +1,12 @@
 # 新闻相关的缓存方法
 from config.cache_conf import get_json_cache,set_cache
-from typing import Any, List, Dict
+from typing import Any, List, Dict, Optional
+
 
 
 # 在查询所有分类时，直接使用如下key就不用再自己定制key。
 CATEGORIES_KEY = "news:categories"
+NEWS_LIST_KEY = "news:list"
 # 实际是存储表的数据。每个字典代表一个分类行数据。
 # categories = [
 #     {"id": 1, "name": "热点","sort_order":"1"},
@@ -28,9 +30,9 @@ async def set_news_categories(categories: List[Dict[str, Any]], expire: int = 72
     return await set_cache(CATEGORIES_KEY, categories, expire)
 
 # 写入新闻列表缓存
-async def set_cache_news_list(category_id: int, page: int, page_size: int, news_list: List[Dict[str, Any]], expire: int = 600) -> bool:
-    return await set_cache(f"news:list:{category_id}:{page}:{page_size}", news_list, expire)
+async def set_cache_news_list(category_id: Optional[int], page: int, page_size: int, news_list: List[Dict[str, Any]], expire: int = 1800) -> bool:
+    return await set_cache(f"{NEWS_LIST_KEY}:{category_id if category_id else 'all'}:{page}:{page_size}", news_list, expire)
 
 # 读取新闻列表缓存
-async def get_cache_news_list(category_id: int, page: int, page_size: int) -> Any:
-    return await get_json_cache(f"news:list:{category_id}:{page}:{page_size}")
+async def get_cache_news_list(category_id: Optional[int], page: int, page_size: int) -> Any:
+    return await get_json_cache(f"{NEWS_LIST_KEY}:{category_id if category_id else 'all'}:{page}:{page_size}")

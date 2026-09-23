@@ -4,7 +4,7 @@ from models.news import Category,News
 from config.db_conf import get_db
 from sqlalchemy import select,func,update
 from fastapi import HTTPException
-from cache.news_cache import get_news_categories,set_news_categories
+from cache.news_cache import get_news_categories,set_news_categories,get_cache_news_list,set_cache_news_list
 from fastapi.encoders import jsonable_encoder
 
 
@@ -18,6 +18,7 @@ async def get_category_list(
     # 先从缓存中获取
     cached_categories = await get_news_categories()
     if cached_categories is not None:
+        # 原本返回ORM对象列表，这里返回了JSON格式
         return cached_categories
     # 如果没有查出缓存，从数据库中查询，然后写入缓存
     stmt = select(Category).offset(skip).limit(limits)
@@ -36,9 +37,26 @@ async def get_category_news_list(
         page_size: int = 10,
         db: AsyncSession = Depends(get_db)
     ):
+    # 构造缓存key
+    # 缓存key: news:list:{category_id}:{page}:{page_size}
+    # 缓存key: news:list:all:{page}:{page_size}
+    page = skip // page_size + 1
+    cached_news_list = await get_cache_news_list(category_id, page, page_size)
+    if cached_news_list is not None:
+        # 这里需要ORM格式，因为还需要封装到Response里
+        #return cached_news_list
+        return [ News(**item) for item in cached_news_list]
+    # 如果没有查出缓存，从数据库中查询，然后写入缓存
     stmt = select(News).where(News.category_id == category_id).offset(skip).limit(page_size)
     result = await db.execute(stmt)
-    return result.scalars().all()
+    cached_news_list = result.scalars().all()
+    if cached_news_list is not None:
+        cached_news_list = jsonable_encoder(cached_news_list)
+        # 写入缓存
+        # 需要将 ORM对象转为字典才能存入缓存
+        #  NewsItemBase.model_validate(item).model_dump(mode="json", by_alias=False)
+        await set_cache_news_list(category_id, page, page_size, cached_news_list, expire=600)
+    return cached_news_list
 
 async def get_category_news_count(
         category_id: int,

@@ -33,7 +33,8 @@ async def get_category_news_list(
     # 实际这里需要返回分页数据，因此需要查询数据库
     # 思路: 处理分页规则 -> 查询新闻列表 -> 计算总量 -> 计算是否还有更多(当前的起始点 + 当前页数量 < 总量)
     offset = (page - 1) * page_size
-    news_list = await news.get_category_news_list(category_id, offset, page_size, db)
+    #news_list = await news.get_category_news_list(category_id, offset, page_size, db)
+    news_list = await news_cache.get_category_news_list(category_id, offset, page_size, db)
     news_count = await news.get_category_news_count(category_id, db)
     return {
         "code": 200,
